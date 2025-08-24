@@ -412,6 +412,3 @@ def api_stats():
     except Exception as e:
         print(f"Stats API error: {e}")
         return jsonify({'error': 'Failed to fetch statistics'}), 500
-
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000) 
