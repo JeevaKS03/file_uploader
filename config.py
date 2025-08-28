@@ -22,7 +22,7 @@ class Config:
     
     # Cloudinary Upload Settings
     CLOUDINARY_FOLDER = 'file_manager'
-    CLOUDINARY_RESOURCE_TYPE = 'auto'
+    CLOUDINARY_RESOURCE_TYPE = 'raw'
     
     @staticmethod
     def init_app(app):
