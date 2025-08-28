@@ -112,16 +112,30 @@ def upload_to_cloudinary(file):
             # If we can't check existing files, just use original name
             pass
         
+        # Determine resource type based on file extension
+        file_extension = extension.lower()
+        image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'}
+        video_extensions = {'.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm'}
+        
+        if file_extension in image_extensions:
+            resource_type = 'image'
+        elif file_extension in video_extensions:
+            resource_type = 'video'
+        else:
+            resource_type = 'raw'  # For text files, documents, etc.
+        
         # Upload to Cloudinary with original filename
+        print(f"Uploading {original_filename} as {resource_type} resource type")
         result = cloudinary.uploader.upload(
             file,
-            resource_type=app.config['CLOUDINARY_RESOURCE_TYPE'],
+            resource_type=resource_type,
             folder=app.config['CLOUDINARY_FOLDER'],
             public_id=final_filename,  # Just the filename, folder will be added automatically
             use_filename=False,  # Don't use Cloudinary's filename generation
             unique_filename=False,  # Don't make unique
             overwrite=False
         )
+        print(f"Upload result: {result}")
         return result
     except Exception as e:
         print(f"Error uploading to Cloudinary: {e}")
@@ -160,19 +174,27 @@ def index():
     # Get list of files from Cloudinary
     files = []
     try:
-        # List all resources in the configured folder
-        result = cloudinary.api.resources(
-            type="upload",
-            prefix=f"{app.config['CLOUDINARY_FOLDER']}/",
-            max_results=100,
-            sort_by="created_at",
-            sort_direction="desc"
-        )
+        # List all resource types in the configured folder
+        resource_types = ['image', 'video', 'raw']
         
-        for resource in result.get('resources', []):
-            file_info = get_file_info(resource)
-            if file_info:
-                files.append(file_info)
+        for resource_type in resource_types:
+            try:
+                result = cloudinary.api.resources(
+                    type="upload",
+                    resource_type=resource_type,
+                    prefix=f"{app.config['CLOUDINARY_FOLDER']}/",
+                    max_results=100,
+                    sort_by="created_at",
+                    sort_direction="desc"
+                )
+                
+                for resource in result.get('resources', []):
+                    file_info = get_file_info(resource)
+                    if file_info:
+                        files.append(file_info)
+            except Exception as e:
+                print(f"Error fetching {resource_type} files: {e}")
+                continue
                 
     except Exception as e:
         print(f"Error fetching files from Cloudinary: {e}")
@@ -216,21 +238,31 @@ def upload_file():
 @app.route('/download/<filename>')
 def download_file(filename):
     try:
-        # Find the file in Cloudinary by filename
-        result = cloudinary.api.resources(
-            type="upload",
-            prefix=f"{app.config['CLOUDINARY_FOLDER']}/",
-            max_results=100
-        )
-        
+        # Find the file in Cloudinary by filename across all resource types
+        resource_types = ['image', 'video', 'raw']
         file_url = None
         original_filename = None
         
-        for resource in result.get('resources', []):
-            if resource.get('original_filename') == filename:
-                file_url = resource.get('secure_url')
-                original_filename = resource.get('original_filename')
-                break
+        for resource_type in resource_types:
+            try:
+                result = cloudinary.api.resources(
+                    type="upload",
+                    resource_type=resource_type,
+                    prefix=f"{app.config['CLOUDINARY_FOLDER']}/",
+                    max_results=100
+                )
+                
+                for resource in result.get('resources', []):
+                    if resource.get('original_filename') == filename:
+                        file_url = resource.get('secure_url')
+                        original_filename = resource.get('original_filename')
+                        break
+                
+                if file_url and original_filename:
+                    break
+            except Exception as e:
+                print(f"Error searching {resource_type} files: {e}")
+                continue
         
         if file_url and original_filename:
             # Download file from Cloudinary
@@ -351,18 +383,27 @@ def api_files():
     """API endpoint to get file list as JSON"""
     files = []
     try:
-        result = cloudinary.api.resources(
-            type="upload",
-            prefix=f"{app.config['CLOUDINARY_FOLDER']}/",
-            max_results=100,
-            sort_by="created_at",
-            sort_direction="desc"
-        )
+        # List all resource types in the configured folder
+        resource_types = ['image', 'video', 'raw']
         
-        for resource in result.get('resources', []):
-            file_info = get_file_info(resource)
-            if file_info:
-                files.append(file_info)
+        for resource_type in resource_types:
+            try:
+                result = cloudinary.api.resources(
+                    type="upload",
+                    resource_type=resource_type,
+                    prefix=f"{app.config['CLOUDINARY_FOLDER']}/",
+                    max_results=100,
+                    sort_by="created_at",
+                    sort_direction="desc"
+                )
+                
+                for resource in result.get('resources', []):
+                    file_info = get_file_info(resource)
+                    if file_info:
+                        files.append(file_info)
+            except Exception as e:
+                print(f"Error fetching {resource_type} files for API: {e}")
+                continue
                 
     except Exception as e:
         print(f"API error: {e}")
@@ -374,19 +415,30 @@ def api_files():
 def api_stats():
     """API endpoint to get file statistics"""
     try:
-        result = cloudinary.api.resources(
-            type="upload",
-            prefix=f"{app.config['CLOUDINARY_FOLDER']}/",
-            max_results=1000
-        )
+        # List all resource types in the configured folder
+        resource_types = ['image', 'video', 'raw']
+        all_resources = []
         
-        total_files = len(result.get('resources', []))
-        total_size = sum(resource.get('bytes', 0) for resource in result.get('resources', []))
+        for resource_type in resource_types:
+            try:
+                result = cloudinary.api.resources(
+                    type="upload",
+                    resource_type=resource_type,
+                    prefix=f"{app.config['CLOUDINARY_FOLDER']}/",
+                    max_results=1000
+                )
+                all_resources.extend(result.get('resources', []))
+            except Exception as e:
+                print(f"Error fetching {resource_type} files for stats: {e}")
+                continue
+        
+        total_files = len(all_resources)
+        total_size = sum(resource.get('bytes', 0) for resource in all_resources)
         
         # Count recent uploads (last 24 hours)
         recent_count = 0
         current_time = datetime.datetime.now()
-        for resource in result.get('resources', []):
+        for resource in all_resources:
             created_at = resource.get('created_at')
             if created_at:
                 try:
@@ -412,3 +464,6 @@ def api_stats():
     except Exception as e:
         print(f"Stats API error: {e}")
         return jsonify({'error': 'Failed to fetch statistics'}), 500
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000) 
