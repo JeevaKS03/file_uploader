@@ -235,20 +235,13 @@ def upload_file():
     
     return redirect(url_for('index'))
 
-@app.route('/download/<path:filename>')
+@app.route('/download/<filename>')
 def download_file(filename):
     try:
-        print(f"[DOWNLOAD] Requested filename: {filename}")
-        
-        # Extract base filename (no extension)
-        path = os.path.splitext(filename)
-        base_filename = os.path.basename(path[0])  # e.g., 'flask_app_with_backend'
-        extension = path[1]                        # e.g., '.rar'
-        print(f"[DOWNLOAD] Base filename: {base_filename}, Extension: {extension}")
-        
+        # Find the file in Cloudinary by filename across all resource types
         resource_types = ['image', 'video', 'raw']
         file_url = None
-        matched_resource = None
+        original_filename = None
         
         for resource_type in resource_types:
             try:
@@ -256,52 +249,98 @@ def download_file(filename):
                     type="upload",
                     resource_type=resource_type,
                     prefix=f"{app.config['CLOUDINARY_FOLDER']}/",
-                    max_results=500  # Increase if needed
+                    max_results=100
                 )
                 
                 for resource in result.get('resources', []):
-                    public_id = resource.get('public_id', '')
-                    original_filename = resource.get('original_filename', '')
-                    
-                    print(f"Checking resource: public_id={public_id}, original_filename={original_filename}")
-                    
-                    # Match against public_id's base name (Cloudinary strips file extensions)
-                    if public_id.endswith(base_filename):
+                    # Try multiple ways to match the filename
+                    resource_filename = resource.get('original_filename') or resource.get('public_id', '').split('/')[-1]
+                    if resource_filename == filename:
                         file_url = resource.get('secure_url')
-                        matched_resource = resource
-                        print(f"[DOWNLOAD] Match found: {file_url}")
+                        original_filename = resource_filename
                         break
-
-                if file_url:
+                
+                if file_url and original_filename:
                     break
             except Exception as e:
-                print(f"Error checking resource_type={resource_type}: {e}")
+                print(f"Error searching {resource_type} files: {e}")
                 continue
-
-        if file_url and matched_resource:
-            # Append extension to filename
-            download_name = matched_resource.get('original_filename', base_filename) + extension
+        
+        if file_url and original_filename:
+            # Download file from Cloudinary
             response = requests.get(file_url)
             if response.status_code == 200:
+                # Create BytesIO object from the content
                 file_stream = BytesIO(response.content)
                 file_stream.seek(0)
+                
                 return send_file(
                     file_stream,
                     as_attachment=True,
-                    download_name=download_name,
+                    download_name=original_filename,
                     mimetype='application/octet-stream'
                 )
             else:
                 flash('Error downloading file from cloud storage', 'error')
         else:
             flash('File not found in cloud storage', 'error')
-    
+            
     except Exception as e:
-        print(f"[DOWNLOAD ERROR] {e}")
+        print(f"Download error: {e}")
         flash(f'Error downloading file: {str(e)}', 'error')
-
+    
     return redirect(url_for('index'))
 
+@app.route('/download_by_id/<path:public_id>')
+def download_file_by_id(public_id):
+    """Download file directly using Cloudinary public_id - more reliable"""
+    try:
+        # Clean the public_id
+        clean_public_id = urllib.parse.unquote(public_id)
+        print(f"Downloading file with public_id: {clean_public_id}")
+        
+        # Try to get file info from Cloudinary
+        resource_types = ['image', 'video', 'raw']
+        file_url = None
+        original_filename = None
+        
+        for resource_type in resource_types:
+            try:
+                # Try to get the resource info
+                result = cloudinary.api.resource(clean_public_id, resource_type=resource_type)
+                if result and result.get('secure_url'):
+                    file_url = result.get('secure_url')
+                    original_filename = result.get('original_filename') or clean_public_id.split('/')[-1]
+                    print(f"Found file: {original_filename} with URL: {file_url}")
+                    break
+            except Exception as e:
+                print(f"Error with resource type {resource_type}: {e}")
+                continue
+        
+        if file_url and original_filename:
+            # Download file from Cloudinary
+            response = requests.get(file_url)
+            if response.status_code == 200:
+                # Create BytesIO object from the content
+                file_stream = BytesIO(response.content)
+                file_stream.seek(0)
+                
+                return send_file(
+                    file_stream,
+                    as_attachment=True,
+                    download_name=original_filename,
+                    mimetype='application/octet-stream'
+                )
+            else:
+                flash('Error downloading file from cloud storage', 'error')
+        else:
+            flash('File not found in cloud storage', 'error')
+            
+    except Exception as e:
+        print(f"Download by ID error: {e}")
+        flash(f'Error downloading file: {str(e)}', 'error')
+    
+    return redirect(url_for('index'))
 
 @app.route('/delete/<filename>', methods=['POST'])
 def delete_file(filename):
@@ -481,5 +520,3 @@ def api_stats():
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000) 
-
-
