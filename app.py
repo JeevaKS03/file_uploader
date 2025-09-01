@@ -235,9 +235,10 @@ def upload_file():
     
     return redirect(url_for('index'))
 
-@app.route('/download/<filename>')
+@app.route('/download/<path:filename>')
 def download_file(filename):
     try:
+        base_filename = os.path.basename(filename)
         # Find the file in Cloudinary by filename across all resource types
         resource_types = ['image', 'video', 'raw']
         file_url = None
@@ -253,7 +254,7 @@ def download_file(filename):
                 )
                 
                 for resource in result.get('resources', []):
-                    if resource.get('original_filename') == filename:
+                    if resource.get('original_filename') == base_filename:
                         file_url = resource.get('secure_url')
                         original_filename = resource.get('original_filename')
                         break
@@ -467,3 +468,4 @@ def api_stats():
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000) 
+
