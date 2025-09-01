@@ -238,11 +238,17 @@ def upload_file():
 @app.route('/download/<path:filename>')
 def download_file(filename):
     try:
-        base_filename = os.path.basename(filename)
-        # Find the file in Cloudinary by filename across all resource types
+        print(f"[DOWNLOAD] Requested filename: {filename}")
+        
+        # Extract base filename (no extension)
+        path = os.path.splitext(filename)
+        base_filename = os.path.basename(path[0])  # e.g., 'flask_app_with_backend'
+        extension = path[1]                        # e.g., '.rar'
+        print(f"[DOWNLOAD] Base filename: {base_filename}, Extension: {extension}")
+        
         resource_types = ['image', 'video', 'raw']
         file_url = None
-        original_filename = None
+        matched_resource = None
         
         for resource_type in resource_types:
             try:
@@ -250,45 +256,52 @@ def download_file(filename):
                     type="upload",
                     resource_type=resource_type,
                     prefix=f"{app.config['CLOUDINARY_FOLDER']}/",
-                    max_results=100
+                    max_results=500  # Increase if needed
                 )
                 
                 for resource in result.get('resources', []):
-                    if resource.get('original_filename') == base_filename:
+                    public_id = resource.get('public_id', '')
+                    original_filename = resource.get('original_filename', '')
+                    
+                    print(f"Checking resource: public_id={public_id}, original_filename={original_filename}")
+                    
+                    # Match against public_id's base name (Cloudinary strips file extensions)
+                    if public_id.endswith(base_filename):
                         file_url = resource.get('secure_url')
-                        original_filename = resource.get('original_filename')
+                        matched_resource = resource
+                        print(f"[DOWNLOAD] Match found: {file_url}")
                         break
-                
-                if file_url and original_filename:
+
+                if file_url:
                     break
             except Exception as e:
-                print(f"Error searching {resource_type} files: {e}")
+                print(f"Error checking resource_type={resource_type}: {e}")
                 continue
-        
-        if file_url and original_filename:
-            # Download file from Cloudinary
+
+        if file_url and matched_resource:
+            # Append extension to filename
+            download_name = matched_resource.get('original_filename', base_filename) + extension
             response = requests.get(file_url)
             if response.status_code == 200:
-                # Create BytesIO object from the content
                 file_stream = BytesIO(response.content)
                 file_stream.seek(0)
-                
                 return send_file(
                     file_stream,
                     as_attachment=True,
-                    download_name=original_filename,
+                    download_name=download_name,
                     mimetype='application/octet-stream'
                 )
             else:
                 flash('Error downloading file from cloud storage', 'error')
         else:
             flash('File not found in cloud storage', 'error')
-            
-    except Exception as e:
-        print(f"Download error: {e}")
-        flash(f'Error downloading file: {str(e)}', 'error')
     
+    except Exception as e:
+        print(f"[DOWNLOAD ERROR] {e}")
+        flash(f'Error downloading file: {str(e)}', 'error')
+
     return redirect(url_for('index'))
+
 
 @app.route('/delete/<filename>', methods=['POST'])
 def delete_file(filename):
@@ -468,4 +481,5 @@ def api_stats():
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000) 
+
 
