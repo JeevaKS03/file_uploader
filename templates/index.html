@@ -673,6 +673,24 @@
             transform: translateX(0);
         }
 
+        .toast-success {
+            background: rgba(16, 185, 129, 0.95);
+            color: white;
+            border-color: rgba(16, 185, 129, 0.3);
+        }
+
+        .toast-error {
+            background: rgba(239, 68, 68, 0.95);
+            color: white;
+            border-color: rgba(239, 68, 68, 0.3);
+        }
+
+        .toast-info {
+            background: rgba(59, 130, 246, 0.95);
+            color: white;
+            border-color: rgba(59, 130, 246, 0.3);
+        }
+
         /* File type specific colors */
         .file-pdf { color: #ef4444; }
         .file-doc { color: #3b82f6; }
@@ -769,7 +787,7 @@
                                 </div>
                             </div>
                             <div class="file-actions">
-                                <a href="{{ url_for('download_file', filename=file.name) }}" class="btn btn-download">
+                                <a href="{{ url_for('download_file_by_id', public_id=file.public_id) }}" class="btn btn-download" data-public-id="{{ file.public_id }}">
                                     <i class="fas fa-download"></i> Download
                                 </a>
                                 <button type="button" class="btn btn-delete" onclick="handleDelete('{{ file.public_id }}', '{{ file.name }}')">
@@ -1143,6 +1161,65 @@
                 document.getElementById('fileInput').click();
             }
         });
+
+        // Handle download clicks with better error handling
+        document.querySelectorAll('.btn-download').forEach(btn => {
+            btn.addEventListener('click', async function(e) {
+                e.preventDefault();
+                
+                const publicId = this.getAttribute('data-public-id');
+                const filename = this.closest('.file-item').querySelector('.file-details h3').textContent;
+                
+                // Show loading state
+                const originalText = this.innerHTML;
+                this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Downloading...';
+                this.style.pointerEvents = 'none';
+                
+                try {
+                    // Try to download the file
+                    const response = await fetch(`/download_by_id/${publicId}`);
+                    
+                    if (response.ok) {
+                        // Create a blob and download
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                        
+                        // Show success message
+                        showToast('File downloaded successfully!', 'success');
+                    } else {
+                        throw new Error(`Download failed: ${response.status}`);
+                    }
+                } catch (error) {
+                    console.error('Download error:', error);
+                    showToast('Download failed. Please try again.', 'error');
+                } finally {
+                    // Restore button state
+                    this.innerHTML = originalText;
+                    this.style.pointerEvents = 'auto';
+                }
+            });
+        });
+
+        // Toast notification function
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.innerHTML = `<i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i> ${message}`;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => toast.classList.add('show'), 100);
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
 
         // Show keyboard shortcut hint
         setTimeout(() => {
