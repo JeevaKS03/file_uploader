@@ -787,9 +787,15 @@
                                 </div>
                             </div>
                             <div class="file-actions">
-                                <a href="{{ url_for('download_file_by_id', public_id=file.public_id) }}" class="btn btn-download" data-public-id="{{ file.public_id }}">
-                                    <i class="fas fa-download"></i> Download
-                                </a>
+                                {% if file.name.lower().endswith('.zip') %}
+                                    <a href="{{ url_for('download_zip_file', public_id=file.public_id) }}" class="btn btn-download" data-public-id="{{ file.public_id }}">
+                                        <i class="fas fa-download"></i> Download ZIP
+                                    </a>
+                                {% else %}
+                                    <a href="{{ url_for('download_file_by_id', public_id=file.public_id) }}" class="btn btn-download" data-public-id="{{ file.public_id }}">
+                                        <i class="fas fa-download"></i> Download
+                                    </a>
+                                {% endif %}
                                 <button type="button" class="btn btn-delete" onclick="handleDelete('{{ file.public_id }}', '{{ file.name }}')">
                                     <i class="fas fa-trash"></i> Delete
                                 </button>
@@ -1167,6 +1173,7 @@
             btn.addEventListener('click', async function(e) {
                 e.preventDefault();
                 
+                const isZipDownload = this.textContent.includes('ZIP');
                 const publicId = this.getAttribute('data-public-id');
                 const filename = this.closest('.file-item').querySelector('.file-details h3').textContent;
                 
@@ -1176,25 +1183,47 @@
                 this.style.pointerEvents = 'none';
                 
                 try {
-                    // Try to download the file
-                    const response = await fetch(`/download_by_id/${publicId}`);
-                    
-                    if (response.ok) {
-                        // Create a blob and download
-                        const blob = await response.blob();
-                        const url = window.URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = filename;
-                        document.body.appendChild(a);
-                        a.click();
-                        window.URL.revokeObjectURL(url);
-                        document.body.removeChild(a);
-                        
-                        // Show success message
-                        showToast('File downloaded successfully!', 'success');
+                    let downloadUrl;
+                    if (isZipDownload) {
+                        downloadUrl = `/download_zip/${publicId}`;
                     } else {
-                        throw new Error(`Download failed: ${response.status}`);
+                        downloadUrl = `/download_by_id/${publicId}`;
+                    }
+                    
+                    // For ZIP files, use fetch to ensure proper filename
+                    if (isZipDownload) {
+                        const response = await fetch(downloadUrl);
+                        if (response.ok) {
+                            const blob = await response.blob();
+                            const url = window.URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = filename.endsWith('.zip') ? filename : filename + '.zip';
+                            document.body.appendChild(a);
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                            document.body.removeChild(a);
+                            showToast('ZIP file downloaded successfully!', 'success');
+                        } else {
+                            throw new Error(`Download failed: ${response.status}`);
+                        }
+                    } else {
+                        // Regular download for non-ZIP files
+                        const response = await fetch(downloadUrl);
+                        if (response.ok) {
+                            const blob = await response.blob();
+                            const url = window.URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = filename;
+                            document.body.appendChild(a);
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                            document.body.removeChild(a);
+                            showToast('File downloaded successfully!', 'success');
+                        } else {
+                            throw new Error(`Download failed: ${response.status}`);
+                        }
                     }
                 } catch (error) {
                     console.error('Download error:', error);
