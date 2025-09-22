@@ -172,12 +172,7 @@ def upload_to_cloudinary(file):
             # If we can't check existing files, just use original name
             pass
         
-        # Determine resource type based on file extension
-        file_extension = extension.lower()
-        image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'}
-        video_extensions = {'.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm'}
-        
-        # Upload ALL files as 'auto' to avoid access restrictions
+        # Keep Cloudinary auto-detection for resource type
         resource_type = 'auto'
         print(f"Uploading {original_filename} as 'auto' resource type to avoid restrictions")
         
@@ -278,47 +273,13 @@ def upload_file():
     
     if file and allowed_file(file.filename):
         try:
-            # Special handling for ZIP files to avoid all access issues
-            if file.filename.lower().endswith('.zip'):
-                print("ZIP file detected - disguising as text file to avoid restrictions")
-                
-                # Save original filename for later
-                original_zip_name = secure_filename(file.filename)
-                fake_txt_name = original_zip_name.replace('.zip', '.txt')
-                
-                # Upload ZIP with .txt extension to make Cloudinary treat it as text
-                result = cloudinary.uploader.upload(
-                    file,
-                    resource_type='raw',
-                    folder=app.config['CLOUDINARY_FOLDER'],
-                    public_id=fake_txt_name,  # Upload as .txt file
-                    use_filename=False,
-                    unique_filename=False,
-                    overwrite=False,
-                    type='upload',
-                    access_mode='public'
-                )
-                
-                # Store the real filename in the result for display
-                if result:
-                    result['original_filename'] = original_zip_name
-                    print(f"ZIP uploaded as: {fake_txt_name}, real name: {original_zip_name}")
-                
-                if result:
-                    print(f"ZIP upload successful: {result}")
-                    flash(f'ZIP file "{file.filename}" uploaded successfully!', 'success')
-                else:
-                    flash('Error uploading ZIP file', 'error')
+            # Upload all files normally; no disguises
+            result = upload_to_cloudinary(file)
+            if result:
+                filename = result.get('original_filename', file.filename)
+                flash(f'File "{filename}" uploaded successfully to cloud!', 'success')
             else:
-                # Regular upload for other files
-                result = upload_to_cloudinary(file)
-                
-                if result:
-                    filename = result.get('original_filename', file.filename)
-                    flash(f'File "{filename}" uploaded successfully to cloud!', 'success')
-                else:
-                    flash('Error uploading file to cloud storage', 'error')
-                    
+                flash('Error uploading file to cloud storage', 'error')
         except Exception as e:
             print(f"Upload error: {e}")
             flash('Error uploading file to cloud storage', 'error')
@@ -377,33 +338,17 @@ def download_file(filename):
                 continue
         
         if file_url and original_filename:
-            # Download file from Cloudinary with proper binary handling
-            response = requests.get(file_url, stream=True)
-            if response.status_code == 200:
-                # Get the original content type from Cloudinary response
-                content_type = response.headers.get('content-type', 'application/octet-stream')
-                
-                # Get proper MIME type to prevent corruption
-                mime_type = get_mime_type(original_filename, content_type)
-                print(f"Downloading {original_filename}: content_type={content_type}, detected_mime_type={mime_type}")
-                
-                # Create a Flask response with proper binary handling
-                def generate():
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            yield chunk
-                
-                return Response(
-                    generate(),
-                    mimetype=mime_type,
-                    headers={
-                        'Content-Disposition': f'attachment; filename="{original_filename}"',
-                        'Content-Length': response.headers.get('content-length', ''),
-                        'Content-Type': mime_type
-                    }
-                )
-            else:
-                flash('Error downloading file from cloud storage', 'error')
+            # Redirect to Cloudinary's signed attachment URL for reliable downloads
+            from cloudinary import utils as cloudinary_utils
+            signed_url, _ = cloudinary_utils.cloudinary_url(
+                resource.get('public_id'),
+                resource_type=resource.get('resource_type', 'auto'),
+                type='upload',
+                sign_url=True,
+                secure=True,
+                attachment=original_filename
+            )
+            return redirect(signed_url)
         else:
             flash('File not found in cloud storage', 'error')
             
@@ -421,135 +366,28 @@ def download_file_by_id(public_id):
         clean_public_id = unquote(public_id)
         print(f"Downloading file with public_id: {clean_public_id}")
         
-        # Try to get file info from Cloudinary
+        # Try to get file info from Cloudinary and redirect to signed attachment URL
         resource_types = ['image', 'video', 'raw', 'auto']
-        file_url = None
-        original_filename = None
-        resource_type = None
-        
         for rt in resource_types:
             try:
-                # Try to get the resource info
                 result = cloudinary.api.resource(clean_public_id, resource_type=rt)
-                if result and result.get('secure_url'):
-                    file_url = result.get('secure_url')
+                if result and result.get('public_id'):
                     original_filename = result.get('original_filename') or clean_public_id.split('/')[-1]
-                    resource_type = rt
-                    
-                    # For raw files, use Admin API to download content directly
-                    if rt == 'raw':
-                        try:
-                            print(f"Attempting Admin API download for: {clean_public_id}")
-                            
-                            # Use Admin API with authentication to get file content
-                            admin_url = f"https://{app.config['CLOUDINARY_API_KEY']}:{app.config['CLOUDINARY_API_SECRET']}@api.cloudinary.com/v1_1/{app.config['CLOUDINARY_CLOUD_NAME']}/resources/raw/upload/{clean_public_id}"
-                            
-                            print(f"Admin API URL: {admin_url}")
-                            admin_response = requests.get(admin_url)
-                            
-                            if admin_response.status_code == 200:
-                                resource_data = admin_response.json()
-                                secure_url = resource_data.get('secure_url')
-                                
-                                # Try to download with the secure URL but add auth parameters
-                                download_url = f"{secure_url}?api_key={app.config['CLOUDINARY_API_KEY']}"
-                                print(f"Trying download with API key: {download_url}")
-                                
-                                download_response = requests.get(download_url)
-                                if download_response.status_code == 200:
-                                    print("Success with API key parameter!")
-                                    mime_type = get_mime_type(original_filename)
-                                    return Response(
-                                        download_response.content,
-                                        mimetype=mime_type,
-                                        headers={
-                                            'Content-Disposition': f'attachment; filename="{original_filename}"',
-                                            'Content-Length': str(len(download_response.content)),
-                                            'Content-Type': mime_type
-                                        }
-                                    )
-                                else:
-                                    print(f"Download with API key failed: {download_response.status_code}")
-                            else:
-                                print(f"Admin API failed: {admin_response.status_code}")
-                                
-                        except Exception as e:
-                            print(f"Admin API download failed: {e}")
-                    
-                    print(f"Falling back to original method for {rt} file: {file_url}")
-                    
-                    print(f"Found file: {original_filename} with URL: {file_url}")
-                    break
+                    from cloudinary import utils as cloudinary_utils
+                    signed_url, _ = cloudinary_utils.cloudinary_url(
+                        result.get('public_id'),
+                        resource_type=rt,
+                        type='upload',
+                        sign_url=True,
+                        secure=True,
+                        attachment=original_filename
+                    )
+                    print(f"Redirecting to signed attachment URL for {original_filename}")
+                    return redirect(signed_url)
             except Exception as e:
                 print(f"Error with resource type {rt}: {e}")
                 continue
-        
-        if file_url and original_filename:
-            # Special handling for ZIP files - they often work without authentication
-            if original_filename.lower().endswith('.zip'):
-                print(f"ZIP file detected - trying direct download: {file_url}")
-                response = requests.get(file_url, stream=True)
-                print(f"ZIP download status: {response.status_code}")
-                
-                if response.status_code == 200:
-                    content_type = response.headers.get('content-type', 'application/zip')
-                    
-                    def generate():
-                        for chunk in response.iter_content(chunk_size=8192):
-                            if chunk:
-                                yield chunk
-                    
-                    return Response(
-                        generate(),
-                        mimetype='application/zip',
-                        headers={
-                            'Content-Disposition': f'attachment; filename="{original_filename}"',
-                            'Content-Length': response.headers.get('content-length', ''),
-                            'Content-Type': 'application/zip'
-                        }
-                    )
-                else:
-                    print(f"ZIP direct download failed: {response.status_code}")
-            
-            # For other files, try normal download
-            print(f"Attempting to download from URL: {file_url}")
-            response = requests.get(file_url, stream=True)
-            print(f"Response status: {response.status_code}")
-            print(f"Response headers: {dict(response.headers)}")
-            
-            if response.status_code == 200:
-                # Check if we got an HTML error page instead of the file
-                content_type = response.headers.get('content-type', 'application/octet-stream')
-                if 'text/html' in content_type:
-                    print("ERROR: Received HTML instead of file - authentication failed")
-                    flash('Authentication error - unable to download file', 'error')
-                    return redirect(url_for('index'))
-                
-                # Get proper MIME type to prevent corruption
-                mime_type = get_mime_type(original_filename, content_type)
-                print(f"Downloading {original_filename}: content_type={content_type}, detected_mime_type={mime_type}")
-                print(f"File size: {response.headers.get('content-length', 'unknown')} bytes")
-                
-                # Create a Flask response with proper binary handling
-                def generate():
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            yield chunk
-                
-                return Response(
-                    generate(),
-                    mimetype=mime_type,
-                    headers={
-                        'Content-Disposition': f'attachment; filename="{original_filename}"',
-                        'Content-Length': response.headers.get('content-length', ''),
-                        'Content-Type': mime_type
-                    }
-                )
-            else:
-                print(f"Failed to download from Cloudinary: {response.status_code}")
-                flash('Error downloading file from cloud storage', 'error')
-        else:
-            flash('File not found in cloud storage', 'error')
+        flash('File not found in cloud storage', 'error')
             
     except Exception as e:
         print(f"Download by ID error: {e}")
